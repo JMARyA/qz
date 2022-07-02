@@ -106,7 +106,41 @@ fn main() {
 
             qz::create_archive(&target, &archive_file);
         }
-        ("test", Some(_)) => {}
+        ("test", Some(cmd)) => {
+            let archive_file = cmd.value_of("archive").unwrap();
+            let a = read_archive(archive_file).unwrap();
+
+            fn check_recursive(a: &qz::QZArchive, path: &str) {
+                //println!("checking path {}", &path);
+                let dir_content = a.ls(path).unwrap();
+                for f in dir_content {
+                    let entry = a.get_entry(std::path::Path::new(path).join(f).to_str().unwrap()).unwrap();
+                    match entry {
+                        qz::QZEntry::Dir(d) => {
+                            check_recursive(a, std::path::Path::new(path).join(&d.name).to_str().unwrap());
+                        },
+                        qz::QZEntry::File(file) => {
+                            let f_path = std::path::Path::new(path).join(&file.name);
+                            //println!("checking file path {}", f_path.to_str().unwrap());
+                            let res = a.check_file(f_path.to_str().unwrap());
+                            if res.is_err() {
+                                let err = res.unwrap_err();
+                                match err {
+                                    qz::errors::FileReadError::Checksum(real, exp) => {
+                                println!("Error checking archive: Damaged file {} (Expected Checksum {} but got {})", f_path.to_str().unwrap(), exp, real);
+                                    }
+                                    _ => {} 
+                                }
+                                std::process::exit(1);
+                            }
+                        }
+                    }
+                }
+            }
+            
+            check_recursive(&a, "/");
+            println!("Everything ok")
+        }
         ("extract", Some(_)) => {
             // TODO : Implement
         }

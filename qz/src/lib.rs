@@ -5,7 +5,7 @@ use std::io::Read;
 use std::io::Seek;
 use std::io::Write;
 
-mod errors;
+pub mod errors;
 
 // TODO : Checksums
 
@@ -14,15 +14,16 @@ mod errors;
 //   -----------
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-enum CompressionAlgo {
+pub enum CompressionAlgo {
     ZSTD,
     NONE,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-struct QZFile {
-    name: String,
-    compression: CompressionAlgo,
+pub struct QZFile {
+    pub name: String,
+    pub compression: CompressionAlgo,
+    pub checksum: u32,
     index_start: u64,
     index_size: u64,
 }
@@ -42,7 +43,16 @@ impl QZFile {
             )));
         }
 
-        println!("reading {:?}", f);
+        //println!("reading {:?}", self);
+
+        // CHECKSUM
+
+        let hash = crc32fast::hash(&read_buf);
+        if hash != self.checksum {
+            return Err(errors::FileReadError::Checksum(hash, self.checksum))
+        }
+
+        // COMPRESSION
 
         match self.compression {
             CompressionAlgo::ZSTD => {
@@ -57,16 +67,25 @@ impl QZFile {
 
         return Ok(read_buf);
     }
+
+    fn is_valid(&self, archive: &str, offset: u64) -> Result<(), errors::FileReadError> {
+        let res = self.read_file(archive, offset);
+        match res {
+            Ok(_) => return Ok(()),
+            Err(errors::FileReadError::Checksum(real, exp)) => return Err(errors::FileReadError::Checksum(real, exp)),
+            _ => return Err(errors::FileReadError::Other(String::new()))
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-struct QZDir {
-    name: String,
-    content: Vec<QZEntry>,
+pub struct QZDir {
+    pub name: String,
+    pub content: Vec<QZEntry>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-enum QZEntry {
+pub enum QZEntry {
     Dir(QZDir),
     File(QZFile),
 }
@@ -93,6 +112,7 @@ fn pack_dir(dir: &str) -> QZEntry {
             let f = QZFile {
                 name: String::from(p.path().file_name().unwrap().to_str().unwrap()),
                 compression: CompressionAlgo::ZSTD, // TODO : Make Option
+                checksum: 0,
                 index_start: 0,
                 index_size: 0,
             };
@@ -149,12 +169,18 @@ pub fn create_archive(dir: &str, out_file: &str) {
                     let mut buffer = vec![0; metadata.len() as usize];
                     file.read(&mut buffer).expect("buffer overflow");
 
+                    // COMPRESSION
+
                     match f.compression {
                         CompressionAlgo::ZSTD => {
                             buffer = zstd::stream::encode_all(&buffer[0..buffer.len()], 5).unwrap();
                         }
                         CompressionAlgo::NONE => {}
                     }
+
+                    // CHECKSUM
+
+                    f.checksum = crc32fast::hash(&buffer);
 
                     f.index_size = buffer.len() as u64;
 
@@ -215,7 +241,7 @@ impl QZArchive {
         let mut path_c = std::path::Path::new(&path).components();
 
         if path_c.next() == Some(std::path::Component::RootDir) {
-            let res = QZArchive::get_entry(path_c, &self.header.root);
+            let res = QZArchive::_get_entry(path_c, &self.header.root);
             if res.is_err() {
                 return Err(errors::FileReadError::Other(format!(
                     "{:?}",
@@ -241,11 +267,56 @@ impl QZArchive {
         return Err(errors::FileReadError::NotFound);
     }
 
+    pub fn check_file(&self, path: &str) -> Result<(), errors::FileReadError> {
+        let path = QZArchive::get_path(path);
+        let mut path_c = std::path::Path::new(&path).components();
+
+        if path_c.next() == Some(std::path::Component::RootDir) {
+            let res = QZArchive::_get_entry(path_c, &self.header.root);
+            if res.is_err() {
+                return Err(errors::FileReadError::Other(format!(
+                    "{:?}",
+                    res.unwrap_err()
+                )));
+            }
+            let res = res.unwrap();
+
+            match res {
+                QZEntry::Dir(_) => {
+                    return Err(errors::FileReadError::NotAFile);
+                }
+                QZEntry::File(f) => {
+                    let file_valid = f.is_valid(&self.archive_file, self.header_size + 8);
+                    if file_valid.is_err() {
+                        return Err(file_valid.unwrap_err());
+                    }
+                    return Ok(());
+                }
+            }
+        }
+        return Err(errors::FileReadError::NotFound);
+}
+
     fn get_path(path: &str) -> String {
         return format!("/{}", path);
     }
 
-    fn get_entry(
+    /// Get qz entry for given path
+    pub fn get_entry(&self, path: &str) -> Result<QZEntry, errors::EntryError> {
+        let path = QZArchive::get_path(path);
+        let mut path_c = std::path::Path::new(&path).components();
+
+        if path_c.next() == Some(std::path::Component::RootDir) {
+            let res = QZArchive::_get_entry(path_c, &self.header.root);
+            if res.is_err() {
+                return Err(res.unwrap_err());
+            }
+            return Ok(res.unwrap());
+        }
+        return Err(errors::EntryError::Other(String::new()));
+    }
+
+    fn _get_entry(
         mut comp: std::path::Components,
         current_entry: &QZEntry,
     ) -> Result<QZEntry, errors::EntryError> {
@@ -257,7 +328,7 @@ impl QZArchive {
                             QZEntry::Dir(d) => {
                                 //println!("matching {:?} and {:?}", d.name, walk_path_name.to_str().unwrap());
                                 if d.name == walk_path_name.to_str().unwrap() {
-                                    return QZArchive::get_entry(comp, &QZEntry::Dir(d.clone()));
+                                    return QZArchive::_get_entry(comp, &QZEntry::Dir(d.clone()));
                                 }
                             }
                             QZEntry::File(f) => {
@@ -289,7 +360,7 @@ impl QZArchive {
         let mut content: Vec<String> = vec![];
 
         if path_c.next() == Some(std::path::Component::RootDir) {
-            let res = QZArchive::get_entry(path_c, &self.header.root);
+            let res = QZArchive::_get_entry(path_c, &self.header.root);
             if res.is_err() {
                 return Err(errors::ListingError::Other(format!(
                     "{:?}",

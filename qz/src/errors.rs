@@ -24,6 +24,7 @@ pub enum FileReadError {
     NotAFile,
     NotFound,
     CompressionError,
+    Checksum(u32, u32),
     Other(String),
 }
 
