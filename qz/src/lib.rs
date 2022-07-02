@@ -7,8 +7,6 @@ use std::io::Write;
 
 pub mod errors;
 
-// TODO : Checksums
-
 //   -----------
 //   | STRUCTS |
 //   -----------
@@ -100,7 +98,7 @@ pub struct QZArchiveHeader {
 }
 
 // Turn directory structure into QZEntry structure
-fn pack_dir(dir: &str) -> QZEntry {
+fn pack_dir(dir: &str, compression: CompressionAlgo) -> QZEntry {
     let mut content: Vec<QZEntry> = vec![];
 
     let paths = fs::read_dir(dir).unwrap();
@@ -111,14 +109,14 @@ fn pack_dir(dir: &str) -> QZEntry {
         if p.metadata().unwrap().is_file() {
             let f = QZFile {
                 name: String::from(p.path().file_name().unwrap().to_str().unwrap()),
-                compression: CompressionAlgo::ZSTD, // TODO : Make Option
+                compression: compression.clone(),
                 checksum: 0,
                 index_start: 0,
                 index_size: 0,
             };
             content.push(QZEntry::File(f));
         } else if p.metadata().unwrap().is_dir() {
-            let d = pack_dir(p.path().to_str().unwrap());
+            let d = pack_dir(p.path().to_str().unwrap(), compression.clone());
             content.push(d);
         }
     }
@@ -138,12 +136,10 @@ fn pack_dir(dir: &str) -> QZEntry {
 //   | WRITE |
 //   ---------
 
-// TODO : Refactor
-
 /// Creating a QZ Archive
-pub fn create_archive(dir: &str, out_file: &str) {
+pub fn create_archive(dir: &str, out_file: &str, name: &str, description: &str, compression: CompressionAlgo) {
     // SCAN DIR
-    let mut root = pack_dir(&dir);
+    let mut root = pack_dir(&dir, compression);
 
     // PROCESS & MAKE FILE
 
@@ -201,8 +197,8 @@ pub fn create_archive(dir: &str, out_file: &str) {
     }
 
     let archive = QZArchiveHeader {
-        name: String::from("Archive"),
-        info: String::from("info"),
+        name: name.to_string(),
+        info: description.to_string(),
         version: option_env!("CARGO_PKG_VERSION").unwrap().to_string(),
         root: root,
     };

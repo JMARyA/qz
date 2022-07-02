@@ -1,5 +1,13 @@
 use clap::{App, Arg};
+use clap::arg_enum;
 use qz::read_archive;
+
+arg_enum! {
+    enum Compression {
+        Zstd,
+        None
+    }
+}
 
 fn main() {
     let args = App::new("QZip")
@@ -20,7 +28,30 @@ fn main() {
                         .required(true)
                         .value_name("TARGET")
                         .help("directory to pack"),
-                ),
+                )
+                .arg(
+                    Arg::with_name("name")
+                    .short("n")
+                    .long("name")
+                    .help("name of the archive")
+                    .value_name("NAME")
+                )
+                .arg(
+                    Arg::with_name("desc")
+                    .short("d")
+                    .long("description")
+                    .help("path to text file containing a description")
+                    .value_name("DESCRIPTION_FILE")
+                )
+                .arg(
+                    Arg::with_name("compression")
+                    .short("c")
+                    .long("compression")
+                    .help("compression to use")
+                    .possible_values(&Compression::variants())
+                    .value_name("COMPRESSION")
+                    .case_insensitive(true)
+                )
         )
         .subcommand(
             App::new("ls")
@@ -100,11 +131,49 @@ fn main() {
             }
         }
         ("new", Some(cmd)) => {
-            // TODO : Implement
-            let archive_file = cmd.value_of("archive").unwrap();
+            let mut archive_file = String::from(cmd.value_of("archive").unwrap());
+
+            if !archive_file.ends_with(".qz") {
+                archive_file = format!("{}.qz", archive_file);
+            }
+
             let target = cmd.value_of("target").unwrap();
 
-            qz::create_archive(&target, &archive_file);
+            let mut name = std::path::Path::new(&archive_file).file_stem().unwrap().to_str().unwrap();
+            let name_op = cmd.value_of("name");
+
+            if name_op.is_some() {
+                name = name_op.unwrap();
+            }
+
+            let desc_file = cmd.value_of("desc");
+            let mut description = String::new();
+
+            if desc_file.is_some() {
+                let description_res = std::fs::read_to_string(desc_file.unwrap());
+                if description_res.is_err() {
+                    println!("Failed to read description file");
+                    std::process::exit(1);
+                }
+                description = description_res.unwrap();
+            }
+
+            let compression_option = cmd.value_of("compression");
+            let mut compression = qz::CompressionAlgo::ZSTD;
+
+            if compression_option.is_some() {
+                match compression_option.unwrap() {
+                    "none" => {
+                        compression = qz::CompressionAlgo::NONE;
+                    },
+                    "zstd" => {
+                        compression = qz::CompressionAlgo::ZSTD;
+                    }
+                    _ => {}
+                }
+            }
+            
+            qz::create_archive(&target, &archive_file, name, &description, compression);
         }
         ("test", Some(cmd)) => {
             let archive_file = cmd.value_of("archive").unwrap();
