@@ -1,5 +1,5 @@
-use qz::read_archive;
 use clap::{App, Arg};
+use qz::read_archive;
 
 fn main() {
     let args = App::new("QZip")
@@ -16,9 +16,9 @@ fn main() {
                         .help("Archive Filename"),
                 )
                 .arg(
-                    Arg::with_name("target directory")
-                    .required(true)
-                    .value_name("TARGET")
+                    Arg::with_name("target")
+                        .required(true)
+                        .value_name("TARGET")
                         .help("directory to pack"),
                 ),
         )
@@ -37,7 +37,7 @@ fn main() {
                         .default_value("/")
                         .value_name("PATH")
                         .required(false),
-                )
+                ),
         )
         .subcommand(
             App::new("extract")
@@ -50,16 +50,16 @@ fn main() {
                 )
                 .arg(
                     Arg::with_name("target directory")
-                    .short("d")
-                    .long("destination")
-                    .required(false)
-                    .value_name("DESTINATION")
+                        .short("d")
+                        .long("destination")
+                        .required(false)
+                        .value_name("DESTINATION")
                         .help("directory to unpack"),
                 )
                 .arg(
                     Arg::with_name("path")
-                    .required(false)
-                    .value_name("PATH")
+                        .required(false)
+                        .value_name("PATH")
                         .help("specific path to be unpacked"),
                 ),
         )
@@ -99,12 +99,14 @@ fn main() {
                 println!("{}", std::path::Path::new(&path).join(f).to_str().unwrap());
             }
         }
-        ("new", Some(_)) => {
+        ("new", Some(cmd)) => {
             // TODO : Implement
+            let archive_file = cmd.value_of("archive").unwrap();
+            let target = cmd.value_of("target").unwrap();
+
+            qz::create_archive(&target, &archive_file);
         }
-        ("test", Some(_)) => {
-            // TODO : Implement
-        }
+        ("test", Some(_)) => {}
         ("extract", Some(_)) => {
             // TODO : Implement
         }

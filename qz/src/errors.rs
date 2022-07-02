@@ -23,6 +23,7 @@ impl std::fmt::Display for ReadError {
 pub enum FileReadError {
     NotAFile,
     NotFound,
+    CompressionError,
     Other(String),
 }
 

@@ -8,28 +8,54 @@ use std::io::Write;
 mod errors;
 
 // TODO : Checksums
-// TODO : Compression
 
 //   -----------
 //   | STRUCTS |
 //   -----------
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+enum CompressionAlgo {
+    ZSTD,
+    NONE,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 struct QZFile {
     name: String,
+    compression: CompressionAlgo,
     index_start: u64,
     index_size: u64,
 }
 
 impl QZFile {
     // Return file data from archive with header offset
-    fn read_file(&self, archive: &str, offset: u64) -> Vec<u8> {
+    fn read_file(&self, archive: &str, offset: u64) -> Result<Vec<u8>, errors::FileReadError> {
         let mut f = File::open(archive).unwrap();
         let mut read_buf: Vec<u8> = vec![0u8; self.index_size as usize];
         f.seek(std::io::SeekFrom::Start(offset + self.index_start))
             .unwrap();
-        f.read_exact(&mut read_buf).unwrap();
-        return read_buf;
+        let res = f.read_exact(&mut read_buf);
+        if res.is_err() {
+            return Err(errors::FileReadError::Other(format!(
+                "{:?}",
+                res.unwrap_err()
+            )));
+        }
+
+        println!("reading {:?}", f);
+
+        match self.compression {
+            CompressionAlgo::ZSTD => {
+                let res = zstd::stream::decode_all(&read_buf[0..read_buf.len()]);
+                if res.is_err() {
+                    return Err(errors::FileReadError::CompressionError);
+                }
+                read_buf = res.unwrap();
+            }
+            CompressionAlgo::NONE => {}
+        }
+
+        return Ok(read_buf);
     }
 }
 
@@ -66,6 +92,7 @@ fn pack_dir(dir: &str) -> QZEntry {
         if p.metadata().unwrap().is_file() {
             let f = QZFile {
                 name: String::from(p.path().file_name().unwrap().to_str().unwrap()),
+                compression: CompressionAlgo::ZSTD, // TODO : Make Option
                 index_start: 0,
                 index_size: 0,
             };
@@ -122,10 +149,16 @@ pub fn create_archive(dir: &str, out_file: &str) {
                     let mut buffer = vec![0; metadata.len() as usize];
                     file.read(&mut buffer).expect("buffer overflow");
 
-                    // TODO : Add compression
+                    match f.compression {
+                        CompressionAlgo::ZSTD => {
+                            buffer = zstd::stream::encode_all(&buffer[0..buffer.len()], 5).unwrap();
+                        }
+                        CompressionAlgo::NONE => {}
+                    }
 
                     f.index_size = buffer.len() as u64;
 
+                    println!("Adding file {:?}", &f);
                     f_content.extend(buffer);
                 }
             }
@@ -184,7 +217,10 @@ impl QZArchive {
         if path_c.next() == Some(std::path::Component::RootDir) {
             let res = QZArchive::get_entry(path_c, &self.header.root);
             if res.is_err() {
-                return Err(errors::FileReadError::Other(format!("{:?}", res.unwrap_err())));
+                return Err(errors::FileReadError::Other(format!(
+                    "{:?}",
+                    res.unwrap_err()
+                )));
             }
             let res = res.unwrap();
 
@@ -194,7 +230,10 @@ impl QZArchive {
                 }
                 QZEntry::File(f) => {
                     let file_content = f.read_file(&self.archive_file, self.header_size + 8);
-                    return Ok(file_content);
+                    if file_content.is_err() {
+                        return Err(file_content.unwrap_err());
+                    }
+                    return Ok(file_content.unwrap());
                 }
             }
         }
@@ -252,7 +291,10 @@ impl QZArchive {
         if path_c.next() == Some(std::path::Component::RootDir) {
             let res = QZArchive::get_entry(path_c, &self.header.root);
             if res.is_err() {
-                return Err(errors::ListingError::Other(format!("{:?}", res.unwrap_err())));
+                return Err(errors::ListingError::Other(format!(
+                    "{:?}",
+                    res.unwrap_err()
+                )));
             }
             let res = res.unwrap();
 
