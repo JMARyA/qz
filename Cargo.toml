@@ -1,0 +1,8 @@
+[package]
+name = "qz-bin"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clap = "2.0"
+qz = { path = "./qz" }
