@@ -5,6 +5,7 @@ use qz::read_archive;
 arg_enum! {
     enum Compression {
         Zstd,
+        Lz4,
         None
     }
 }
@@ -168,6 +169,9 @@ fn main() {
                     },
                     "zstd" => {
                         compression = qz::CompressionAlgo::ZSTD;
+                    },
+                    "lz4" => {
+                        compression = qz::CompressionAlgo::LZ4;
                     }
                     _ => {}
                 }

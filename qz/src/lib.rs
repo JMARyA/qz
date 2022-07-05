@@ -14,6 +14,7 @@ pub mod errors;
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum CompressionAlgo {
     ZSTD,
+    LZ4,
     NONE,
 }
 
@@ -55,6 +56,13 @@ impl QZFile {
         match self.compression {
             CompressionAlgo::ZSTD => {
                 let res = zstd::stream::decode_all(&read_buf[0..read_buf.len()]);
+                if res.is_err() {
+                    return Err(errors::FileReadError::CompressionError);
+                }
+                read_buf = res.unwrap();
+            }
+            CompressionAlgo::LZ4 => {
+                let res = lz4_compression::decompress::decompress(&read_buf);
                 if res.is_err() {
                     return Err(errors::FileReadError::CompressionError);
                 }
@@ -139,7 +147,7 @@ fn pack_dir(dir: &str, compression: CompressionAlgo) -> QZEntry {
 /// Creating a QZ Archive
 pub fn create_archive(dir: &str, out_file: &str, name: &str, description: &str, compression: CompressionAlgo) {
     // SCAN DIR
-    let mut root = pack_dir(&dir, compression);
+    let mut root = pack_dir(&dir, compression.clone());
 
     // PROCESS & MAKE FILE
 
@@ -170,6 +178,9 @@ pub fn create_archive(dir: &str, out_file: &str, name: &str, description: &str, 
                     match f.compression {
                         CompressionAlgo::ZSTD => {
                             buffer = zstd::stream::encode_all(&buffer[0..buffer.len()], 5).unwrap();
+                        }
+                        CompressionAlgo::LZ4 => {
+                            buffer = lz4_compression::compress::compress(&buffer);
                         }
                         CompressionAlgo::NONE => {}
                     }
@@ -203,7 +214,11 @@ pub fn create_archive(dir: &str, out_file: &str, name: &str, description: &str, 
         root: root,
     };
 
-    let header = serde_json::to_vec(&archive).unwrap();
+    let mut header = serde_json::to_vec(&archive).unwrap();
+
+    // COMPRESSION
+    header = zstd::stream::encode_all(&header[0..header.len()], 5).unwrap();
+
     let header_size = header.len().to_ne_bytes();
 
     // SAVE
@@ -413,6 +428,11 @@ pub fn read_archive(path: &str) -> Result<QZArchive, errors::ReadError> {
     if err.is_err() {
         return Err(errors::ReadError::new("failed to read header"));
     }
+    let res = zstd::stream::decode_all(&header_buf[0..header_buf.len()]);
+    if res.is_err() {
+        return Err(errors::ReadError::new("failed to decompress header"));
+    }
+    header_buf = res.unwrap();
 
     // DESERIALIZE
     let header: Result<QZArchiveHeader, _> = serde_json::from_slice(&header_buf);
@@ -420,6 +440,7 @@ pub fn read_archive(path: &str) -> Result<QZArchive, errors::ReadError> {
         return Err(errors::ReadError::new("failed to decode header"));
     }
     let header = header.unwrap();
+
     //println!("header {:?}", header);
 
     return Ok(QZArchive {

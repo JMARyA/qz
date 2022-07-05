@@ -119,6 +119,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "349d5a591cd28b49e1d1037471617a32ddcda5731b99419008085f72d5a53836"
 
 [[package]]
+name = "lz4-compression"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "761104bf97f13a3caf47d822498a0760a10d00d220148bac2669f63fc3bb8270"
+
+[[package]]
 name = "proc-macro2"
 version = "1.0.40"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -138,9 +144,10 @@ dependencies = [
 
 [[package]]
 name = "qz"
-version = "0.1.2"
+version = "0.1.4"
 dependencies = [
  "crc32fast",
+ "lz4-compression",
  "serde",
  "serde_derive",
  "serde_json",
