@@ -24,7 +24,7 @@ pub struct QZFile {
     pub compression: CompressionAlgo,
     pub checksum: u32,
     index_start: u64,
-    index_size: u64,
+    pub index_size: u64,
 }
 
 impl QZFile {
@@ -48,7 +48,7 @@ impl QZFile {
 
         let hash = crc32fast::hash(&read_buf);
         if hash != self.checksum {
-            return Err(errors::FileReadError::Checksum(hash, self.checksum))
+            return Err(errors::FileReadError::Checksum(hash, self.checksum));
         }
 
         // COMPRESSION
@@ -71,15 +71,17 @@ impl QZFile {
             CompressionAlgo::NONE => {}
         }
 
-        return Ok(read_buf);
+        Ok(read_buf)
     }
 
     fn is_valid(&self, archive: &str, offset: u64) -> Result<(), errors::FileReadError> {
         let res = self.read_file(archive, offset);
         match res {
-            Ok(_) => return Ok(()),
-            Err(errors::FileReadError::Checksum(real, exp)) => return Err(errors::FileReadError::Checksum(real, exp)),
-            _ => return Err(errors::FileReadError::Other(String::new()))
+            Ok(_) => Ok(()),
+            Err(errors::FileReadError::Checksum(real, exp)) => {
+                Err(errors::FileReadError::Checksum(real, exp))
+            }
+            _ => Err(errors::FileReadError::Other(String::new())),
         }
     }
 }
@@ -136,7 +138,7 @@ fn pack_dir(dir: &str, compression: CompressionAlgo) -> QZEntry {
             .to_str()
             .unwrap()
             .to_string(),
-        content: content,
+        content,
     });
 }
 
@@ -145,9 +147,15 @@ fn pack_dir(dir: &str, compression: CompressionAlgo) -> QZEntry {
 //   ---------
 
 /// Creating a QZ Archive
-pub fn create_archive(dir: &str, out_file: &str, name: &str, description: &str, compression: CompressionAlgo) {
+pub fn create_archive(
+    dir: &str,
+    out_file: &str,
+    name: &str,
+    description: &str,
+    compression: CompressionAlgo,
+) {
     // SCAN DIR
-    let mut root = pack_dir(&dir, compression.clone());
+    let mut root = pack_dir(dir, compression);
 
     // PROCESS & MAKE FILE
 
@@ -166,12 +174,13 @@ pub fn create_archive(dir: &str, out_file: &str, name: &str, description: &str, 
                 QZEntry::File(ref mut f) => {
                     let path = std::path::Path::new(path).join(&f.name);
                     //println!("p {}", path.to_str().unwrap());
+                    println!("Adding file {:?}", &f);
                     f.index_start = f_content.len() as u64;
 
                     let mut file = std::fs::File::open(&path).expect("no file found");
                     let metadata = fs::metadata(&path).expect("unable to read metadata");
                     let mut buffer = vec![0; metadata.len() as usize];
-                    file.read(&mut buffer).expect("buffer overflow");
+                    file.read_exact(&mut buffer).expect("buffer overflow");
 
                     // COMPRESSION
 
@@ -191,27 +200,23 @@ pub fn create_archive(dir: &str, out_file: &str, name: &str, description: &str, 
 
                     f.index_size = buffer.len() as u64;
 
-                    println!("Adding file {:?}", &f);
                     f_content.extend(buffer);
                 }
             }
         }
-        return (f_content,);
+        (f_content,)
     }
 
-    match root {
-        QZEntry::Dir(ref mut d) => {
-            let res = write_files_dir(d, dir, files_content);
-            files_content = res.0;
-        }
-        _ => {}
+    if let QZEntry::Dir(ref mut d) = root {
+        let res = write_files_dir(d, dir, files_content);
+        files_content = res.0;
     }
 
     let archive = QZArchiveHeader {
         name: name.to_string(),
         info: description.to_string(),
-        version: option_env!("CARGO_PKG_VERSION").unwrap().to_string(),
-        root: root,
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        root,
     };
 
     let mut header = serde_json::to_vec(&archive).unwrap();
@@ -222,16 +227,16 @@ pub fn create_archive(dir: &str, out_file: &str, name: &str, description: &str, 
     let header_size = header.len().to_ne_bytes();
 
     // SAVE
-    fs::File::create(&out_file).unwrap();
+    fs::File::create(out_file).unwrap();
     let mut final_archive = fs::OpenOptions::new()
         .write(true)
         .append(true) // This is needed to append to file
         .open(out_file)
         .unwrap();
 
-    final_archive.write(&header_size).unwrap();
-    final_archive.write(&header).unwrap();
-    final_archive.write(&files_content).unwrap();
+    final_archive.write_all(&header_size).unwrap();
+    final_archive.write_all(&header).unwrap();
+    final_archive.write_all(&files_content).unwrap();
 }
 
 //   --------
@@ -266,16 +271,12 @@ impl QZArchive {
                     return Err(errors::FileReadError::NotAFile);
                 }
                 QZEntry::File(f) => {
-                    let file_content = f.read_file(&self.archive_file, self.header_size + 8);
-                    if file_content.is_err() {
-                        return Err(file_content.unwrap_err());
-                    }
-                    return Ok(file_content.unwrap());
+                    return f.read_file(&self.archive_file, self.header_size + 8);
                 }
             }
         }
 
-        return Err(errors::FileReadError::NotFound);
+        Err(errors::FileReadError::NotFound)
     }
 
     pub fn check_file(&self, path: &str) -> Result<(), errors::FileReadError> {
@@ -297,19 +298,16 @@ impl QZArchive {
                     return Err(errors::FileReadError::NotAFile);
                 }
                 QZEntry::File(f) => {
-                    let file_valid = f.is_valid(&self.archive_file, self.header_size + 8);
-                    if file_valid.is_err() {
-                        return Err(file_valid.unwrap_err());
-                    }
+                    f.is_valid(&self.archive_file, self.header_size + 8)?;
                     return Ok(());
                 }
             }
         }
-        return Err(errors::FileReadError::NotFound);
-}
+        Err(errors::FileReadError::NotFound)
+    }
 
     fn get_path(path: &str) -> String {
-        return format!("/{}", path);
+        format!("/{path}")
     }
 
     /// Get qz entry for given path
@@ -319,20 +317,17 @@ impl QZArchive {
 
         if path_c.next() == Some(std::path::Component::RootDir) {
             let res = QZArchive::_get_entry(path_c, &self.header.root);
-            if res.is_err() {
-                return Err(res.unwrap_err());
-            }
-            return Ok(res.unwrap());
+            return res;
         }
-        return Err(errors::EntryError::Other(String::new()));
+        Err(errors::EntryError::Other(String::new()))
     }
 
     fn _get_entry(
         mut comp: std::path::Components,
         current_entry: &QZEntry,
     ) -> Result<QZEntry, errors::EntryError> {
-        match current_entry {
-            QZEntry::Dir(current_dir) => match comp.next() {
+        if let QZEntry::Dir(current_dir) = current_entry {
+            match comp.next() {
                 Some(std::path::Component::Normal(walk_path_name)) => {
                     for e in &current_dir.content {
                         match e {
@@ -357,10 +352,9 @@ impl QZArchive {
                 _ => {
                     return Err(errors::EntryError::PathError);
                 }
-            },
-            _ => {}
+            }
         }
-        return Err(errors::EntryError::Other(String::new()));
+        Err(errors::EntryError::Other(String::new()))
     }
 
     /// List content of directory returning list with filenames
@@ -399,7 +393,7 @@ impl QZArchive {
             }
         }
 
-        return Ok(content);
+        Ok(content)
     }
 }
 
@@ -443,9 +437,9 @@ pub fn read_archive(path: &str) -> Result<QZArchive, errors::ReadError> {
 
     //println!("header {:?}", header);
 
-    return Ok(QZArchive {
+    Ok(QZArchive {
         archive_file: path.to_string(),
         header_size: size,
-        header: header,
-    });
+        header,
+    })
 }

@@ -1,5 +1,5 @@
-use clap::{App, Arg};
 use clap::arg_enum;
+use clap::{App, Arg};
 use qz::read_archive;
 
 arg_enum! {
@@ -12,7 +12,7 @@ arg_enum! {
 
 fn main() {
     let args = App::new("QZip")
-        .version(option_env!("CARGO_PKG_VERSION").unwrap())
+        .version(env!("CARGO_PKG_VERSION"))
         .author("JMARyA <jmarya0@icloud.com>")
         .about("QZip Format")
         .subcommand(
@@ -32,27 +32,27 @@ fn main() {
                 )
                 .arg(
                     Arg::with_name("name")
-                    .short("n")
-                    .long("name")
-                    .help("name of the archive")
-                    .value_name("NAME")
+                        .short("n")
+                        .long("name")
+                        .help("name of the archive")
+                        .value_name("NAME"),
                 )
                 .arg(
                     Arg::with_name("desc")
-                    .short("d")
-                    .long("description")
-                    .help("path to text file containing a description")
-                    .value_name("DESCRIPTION_FILE")
+                        .short("d")
+                        .long("description")
+                        .help("path to text file containing a description")
+                        .value_name("DESCRIPTION_FILE"),
                 )
                 .arg(
                     Arg::with_name("compression")
-                    .short("c")
-                    .long("compression")
-                    .help("compression to use")
-                    .possible_values(&Compression::variants())
-                    .value_name("COMPRESSION")
-                    .case_insensitive(true)
-                )
+                        .short("c")
+                        .long("compression")
+                        .help("compression to use")
+                        .possible_values(&Compression::variants())
+                        .value_name("COMPRESSION")
+                        .case_insensitive(true),
+                ),
         )
         .subcommand(
             App::new("ls")
@@ -128,30 +128,46 @@ fn main() {
             println!("QZ Archive \'{}\' : {}", &a.header.name, &path);
             let dir_content = a.ls(&path).unwrap();
             for f in dir_content {
-                println!("{}", std::path::Path::new(&path).join(f).to_str().unwrap());
+                let path = std::path::Path::new(&path).join(f);
+                let path = path.to_str().unwrap();
+
+                let info = a.get_entry(path).unwrap();
+                match info {
+                    qz::QZEntry::Dir(dir) => {
+                        println!("{path}");
+                    }
+                    qz::QZEntry::File(file) => {
+                        let size = file.index_size;
+                        println!("{0}B\t{path}", file_size::fit_4(size));
+                    }
+                }
             }
         }
         ("new", Some(cmd)) => {
             let mut archive_file = String::from(cmd.value_of("archive").unwrap());
 
             if !archive_file.ends_with(".qz") {
-                archive_file = format!("{}.qz", archive_file);
+                archive_file = format!("{archive_file}.qz");
             }
 
             let target = cmd.value_of("target").unwrap();
 
-            let mut name = std::path::Path::new(&archive_file).file_stem().unwrap().to_str().unwrap();
+            let mut name = std::path::Path::new(&archive_file)
+                .file_stem()
+                .unwrap()
+                .to_str()
+                .unwrap();
             let name_op = cmd.value_of("name");
 
-            if name_op.is_some() {
-                name = name_op.unwrap();
+            if let Some(name_op) = name_op {
+                name = name_op;
             }
 
             let desc_file = cmd.value_of("desc");
             let mut description = String::new();
 
-            if desc_file.is_some() {
-                let description_res = std::fs::read_to_string(desc_file.unwrap());
+            if let Some(desc_file) = desc_file {
+                let description_res = std::fs::read_to_string(desc_file);
                 if description_res.is_err() {
                     println!("Failed to read description file");
                     std::process::exit(1);
@@ -162,22 +178,22 @@ fn main() {
             let compression_option = cmd.value_of("compression");
             let mut compression = qz::CompressionAlgo::ZSTD;
 
-            if compression_option.is_some() {
-                match compression_option.unwrap() {
+            if let Some(compression_option) = compression_option {
+                match compression_option {
                     "none" => {
                         compression = qz::CompressionAlgo::NONE;
-                    },
+                    }
                     "zstd" => {
                         compression = qz::CompressionAlgo::ZSTD;
-                    },
+                    }
                     "lz4" => {
                         compression = qz::CompressionAlgo::LZ4;
                     }
                     _ => {}
                 }
             }
-            
-            qz::create_archive(&target, &archive_file, name, &description, compression);
+
+            qz::create_archive(target, &archive_file, name, &description, compression);
         }
         ("test", Some(cmd)) => {
             let archive_file = cmd.value_of("archive").unwrap();
@@ -187,22 +203,23 @@ fn main() {
                 //println!("checking path {}", &path);
                 let dir_content = a.ls(path).unwrap();
                 for f in dir_content {
-                    let entry = a.get_entry(std::path::Path::new(path).join(f).to_str().unwrap()).unwrap();
+                    let entry = a
+                        .get_entry(std::path::Path::new(path).join(f).to_str().unwrap())
+                        .unwrap();
                     match entry {
                         qz::QZEntry::Dir(d) => {
-                            check_recursive(a, std::path::Path::new(path).join(&d.name).to_str().unwrap());
-                        },
+                            check_recursive(
+                                a,
+                                std::path::Path::new(path).join(&d.name).to_str().unwrap(),
+                            );
+                        }
                         qz::QZEntry::File(file) => {
                             let f_path = std::path::Path::new(path).join(&file.name);
                             //println!("checking file path {}", f_path.to_str().unwrap());
                             let res = a.check_file(f_path.to_str().unwrap());
-                            if res.is_err() {
-                                let err = res.unwrap_err();
-                                match err {
-                                    qz::errors::FileReadError::Checksum(real, exp) => {
-                                println!("Error checking archive: Damaged file {} (Expected Checksum {} but got {})", f_path.to_str().unwrap(), exp, real);
-                                    }
-                                    _ => {} 
+                            if let Err(err) = res {
+                                if let qz::errors::FileReadError::Checksum(real, exp) = err {
+                                    println!("Error checking archive: Damaged file {} (Expected Checksum {} but got {})", f_path.to_str().unwrap(), exp, real);
                                 }
                                 std::process::exit(1);
                             }
@@ -210,12 +227,12 @@ fn main() {
                     }
                 }
             }
-            
+
             check_recursive(&a, "/");
             println!("Everything ok")
         }
         ("extract", Some(_)) => {
-            // TODO : Implement
+            todo!();
         }
         _ => {
             println!("{}", args.usage());

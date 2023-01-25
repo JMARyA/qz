@@ -5,9 +5,9 @@ pub struct ReadError {
 
 impl ReadError {
     pub fn new(msg: &str) -> ReadError {
-        return ReadError {
+        ReadError {
             msg: msg.to_string(),
-        };
+        }
     }
 }
 
@@ -30,7 +30,7 @@ pub enum FileReadError {
 
 impl std::fmt::Display for FileReadError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{:?}", self)
+        write!(f, "{self:?}")
     }
 }
 
@@ -45,7 +45,7 @@ pub enum EntryError {
 
 impl std::fmt::Display for EntryError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{:?}", self)
+        write!(f, "{self:?}")
     }
 }
 
@@ -59,7 +59,7 @@ pub enum ListingError {
 
 impl std::fmt::Display for ListingError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{:?}", self)
+        write!(f, "{self:?}")
     }
 }
 

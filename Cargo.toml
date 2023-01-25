@@ -5,4 +5,5 @@ edition = "2021"
 
 [dependencies]
 clap = "2.0"
+file-size = "1.0.3"
 qz = { path = "./qz" }
